@@ -1186,7 +1186,7 @@ def set_workflow_status(workflow_id_or_name, user):  # noqa
         return jsonify({"message": str(e)}), 500
 
 
-@blueprint.route("/workflows/<workflow_id_or_name>/workspace", methods=["POST"])
+@blueprint.route("/workflows/<workflow_id_or_name>/workspace/file", methods=["POST"])
 @signin_required()
 @check_quota
 def upload_file(workflow_id_or_name, user):  # noqa
@@ -1302,6 +1302,132 @@ def upload_file(workflow_id_or_name, user):  # noqa
             urlparse.urljoin(api_url, endpoint),
             data=RequestStreamWithLen(request.stream),
             params={"user": str(user.id_), "file_name": request.args.get("file_name")},
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+        return jsonify(http_response.json()), http_response.status_code
+    except HTTPError as e:
+        logging.error(traceback.format_exc())
+        return jsonify(e.response.json()), e.response.status_code
+    except KeyError as e:
+        logging.error(traceback.format_exc())
+        return jsonify({"message": str(e)}), 400
+    except (REANAQuotaExceededError, ValueError) as e:
+        logging.error(traceback.format_exc())
+        return jsonify({"message": str(e)}), 403
+    except Exception as e:
+        logging.error(traceback.format_exc())
+        return jsonify({"message": str(e)}), 500
+
+
+@blueprint.route("/workflows/<workflow_id_or_name>/workspace/rucio", methods=["POST"])
+@signin_required()
+@check_quota
+def fetch_rucio_files(workflow_id_or_name, user):  # noqa
+    r"""Fetch Rucio files to workspace.
+
+    ---
+    post:
+      summary: Fetches Rucio files to the workspace.
+      description: >-
+        This resource is expecting Rucio DID(s) to place in the workspace.
+      operationId: fetch_rucio_files
+      consumes:
+        - application/octet-stream
+      produces:
+        - application/json
+      parameters:
+        - name: workflow_id_or_name
+          in: path
+          description: Required. Analysis UUID or name.
+          required: true
+          type: string
+        - name: rucio_dids
+          in: body
+          description: Required. Rucio DID(s) of files to add to the workspace.
+          required: true
+          schema:
+            type: array
+        - name: access_token
+          in: query
+          description: The API access_token of workflow owner.
+          required: false
+          type: string
+        - name: preview
+          in: query
+          description: >-
+            Optional flag to return a previewable response of the file
+            (corresponding mime-type).
+          required: false
+          type: boolean
+      responses:
+        200:
+          description: >-
+            Request succeeded. Rucio DIDs successfully fetched.
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+        400:
+          description: >-
+            Request failed. The incoming payload seems malformed
+        403:
+          description: >-
+            Request failed. User is not allowed to access workflow.
+          examples:
+            application/json:
+              {
+                "message": "User 00000000-0000-0000-0000-000000000000
+                            is not allowed to access workflow
+                            256b25f4-4cfb-4684-b7a8-73872ef455a1"
+              }
+        404:
+          description: >-
+            Request failed. User does not exist.
+          examples:
+            application/json:
+              {
+                "message": "Workflow cdcf48b1-c2f3-4693-8230-b066e088c6ac does
+                            not exist"
+              }
+        500:
+          description: >-
+            Request failed. Internal server error.
+          examples:
+            application/json:
+              {
+                "message": "Internal server error."
+              }
+    """
+
+    try:
+        if not ("application/octet-stream" in request.headers.get("Content-Type")):
+            return (
+                jsonify(
+                    {
+                        "message": f"Wrong Content-Type "
+                        f'{request.headers.get("Content-Type")} '
+                        f"use application/octet-stream"
+                    }
+                ),
+                400,
+            )
+
+        if not workflow_id_or_name:
+            raise ValueError("workflow_id_or_name is not supplied")
+
+        prevent_disk_quota_excess(
+            user, request.content_length, action=f"Fetching DID(s)"
+        )
+        api_url = current_rwc_api_client.swagger_spec.__dict__.get("api_url")
+        endpoint = current_rwc_api_client.api.fetch_rucio_files.operation.path_name.format(
+            workflow_id_or_name=workflow_id_or_name
+        )
+        http_response = requests.post(
+            urlparse.urljoin(api_url, endpoint),
+            data=RequestStreamWithLen(request.stream),
+            params={"user": str(user.id_)},
             headers={"Content-Type": "application/octet-stream"},
         )
 
